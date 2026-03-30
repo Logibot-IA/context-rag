@@ -1,16 +1,14 @@
 import os
 from dotenv import load_dotenv
 
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_openai import ChatOpenAI
-
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy, context_precision
-
+from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
 from datasets import Dataset
 
 load_dotenv()
@@ -20,35 +18,45 @@ API_KEY = os.getenv("DO_API_KEY")
 MODEL = os.getenv("DO_MODEL")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-def build_vectorstore(pdf_path):
-    loader = PyPDFLoader(pdf_path)
+test_queries = [
+    "O que é lógica proposicional segundo a apostila?",
+    "Como a apostila define uma proposição?",
+    "O que são conectivos lógicos e quais são apresentados no material?",
+    "O que é uma tabela-verdade e para que ela é utilizada?",
+    "Como a apostila define tautologia, contradição e contingência?"
+]
+
+ground_truths = [
+    "Lógica proposicional é o ramo da lógica que estuda proposições e as relações entre elas por meio de conectivos lógicos.",
+    "Proposição é toda sentença declarativa que pode ser classificada como verdadeira ou falsa, mas não ambas.",
+    "Conectivos lógicos são operadores que conectam proposições, como negação (¬), conjunção (∧), disjunção (∨), condicional (→) e bicondicional (↔).",
+    "Tabela-verdade é um método utilizado para determinar o valor lógico de proposições compostas a partir dos valores lógicos das proposições simples.",
+    "Tautologia é uma proposição composta que é sempre verdadeira; contradição é sempre falsa; contingência é aquela que pode ser verdadeira ou falsa dependendo dos valores das proposições componentes."
+]
+
+
+def build_vectorstore():
+    loader = DirectoryLoader("../docs/", glob="**/*.pdf", loader_cls=PyPDFLoader)
     docs = loader.load()
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
         chunk_overlap=100
     )
-
     chunks = splitter.split_documents(docs)
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
     )
 
-    vectordb = Chroma.from_documents(
-        chunks,
-        embedding=embeddings
-    )
-
+    vectordb = Chroma.from_documents(chunks, embedding=embeddings)
     return vectordb, embeddings
+
 
 def context_rag(query, retriever, llm, top_k=5):
     docs = retriever.invoke(query)
-
     selected_docs = docs[:top_k]
-
     contexts = [d.page_content for d in selected_docs]
-
     context_text = "\n\n".join(contexts)
 
     prompt = f"""
@@ -65,56 +73,32 @@ def context_rag(query, retriever, llm, top_k=5):
     """
 
     response = llm.invoke(prompt).content
-
     return response, contexts
 
-def generate_ground_truth(question, context, llm):
-    prompt = f"""
-    Você é um especialista.
-    Responda a pergunta usando APENAS o contexto abaixo.
-    Seja preciso e objetivo.
 
-    Pergunta:
-    {question}
-
-    Contexto:
-    {context}
-
-    Resposta:
-    """
-
-    response = llm.invoke(prompt)
-    return response.content
-
-def run_ragas(question, answer, context, ground_truth, llm, embeddings):
-
-    data = {
-        "question": [question],
-        "answer": [answer],
-        "contexts": [context],
-        "ground_truth": [ground_truth]
-    }
-
-    dataset = Dataset.from_dict(data)
+def run_ragas(ragas_data, llm, embeddings):
+    dataset = Dataset.from_list(ragas_data)
 
     result = evaluate(
         dataset,
-        metrics=[
-            faithfulness,
-            answer_relevancy,
-            context_precision
-        ],
+        metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
         llm=llm,
         embeddings=embeddings
     )
 
-    print("\n\n\n📊 Resultado RAGAS:\n")
+    print("\n=== RESULTADOS RAGAS ===")
     print(result)
 
-def main():
-    print("\nIndexando PDF...\n")
+    df = result.to_pandas()
+    print("\nDetalhes por query:")
+    print(df.to_string())
 
-    vectordb, embeddings = build_vectorstore("algoritmos_estrutura_de_dados_ifsc.pdf")
+    return result
+
+
+def main():
+    print("\nIndexando PDFs de ../docs/ ...\n")
+    vectordb, embeddings = build_vectorstore()
     retriever = vectordb.as_retriever()
 
     llm = ChatOpenAI(
@@ -124,16 +108,19 @@ def main():
         temperature=0
     )
 
-    query = input("\n\nPergunta: ")
+    print("Coletando respostas para avaliacao RAGAS...\n")
+    ragas_data = []
+    for i, query in enumerate(test_queries):
+        print(f"  [{i+1}/{len(test_queries)}] {query}")
+        answer, contexts = context_rag(query, retriever, llm)
+        ragas_data.append({
+            "question": query,
+            "answer": answer,
+            "contexts": contexts,
+            "ground_truth": ground_truths[i]
+        })
 
-    answer, context = context_rag(query, retriever, llm)
-
-    print("\n\nResposta:\n")
-    print(answer)
-
-    ground_truth = generate_ground_truth(query, context, llm)
-
-    run_ragas(query, answer, context, ground_truth, llm, embeddings)
+    run_ragas(ragas_data, llm, embeddings)
 
 
 if __name__ == "__main__":
