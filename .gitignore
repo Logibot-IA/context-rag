@@ -8,3 +8,5 @@ venv-ragas
 .vscode
 .idea
 __pycache__
+chroma_context_db
+results
