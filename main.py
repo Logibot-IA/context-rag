@@ -7,8 +7,8 @@ Original file is located at
     https://colab.research.google.com/github/Logibot-IA/context-rag/blob/main/main.ipynb
 """
 
-! pip install langchain langchain-community langchain-openai langchain-huggingface langchain-text-splitters chromadb pypdf python-dotenv
-! pip install ragas datasets sentence-transformers
+# ! pip install langchain langchain-community langchain-openai langchain-huggingface langchain-text-splitters chromadb pypdf python-dotenv
+# ! pip install ragas datasets sentence-transformers
 
 import os
 from dotenv import load_dotenv
@@ -27,9 +27,9 @@ from datasets import Dataset
 
 load_dotenv()
 
-os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
-os.environ["LANGCHAIN_API_KEY"]     = os.getenv("LANGCHAIN_API_KEY", "")
-os.environ["LANGCHAIN_PROJECT"]     = os.getenv("LANGCHAIN_PROJECT", "benchmark-context-rag")
+# os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
+# os.environ["LANGCHAIN_API_KEY"]     = os.getenv("LANGCHAIN_API_KEY", "")
+# os.environ["LANGCHAIN_PROJECT"]     = os.getenv("LANGCHAIN_PROJECT", "benchmark-context-rag")
 
 BASE_URL = os.getenv("DO_BASE_URL")
 API_KEY = os.getenv("DO_API_KEY")
@@ -76,7 +76,7 @@ def build_vectorstore():
     )
 
     if vectordb._collection.count() == 0:
-        loader = DirectoryLoader("../docs/", glob="**/*.pdf", loader_cls=PyPDFLoader)
+        loader = DirectoryLoader("./docs/", glob="**/*.pdf", loader_cls=PyPDFLoader)
         docs = loader.load()
 
         splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
@@ -166,10 +166,11 @@ def run_ragas(ragas_data, llm, embeddings):
     return result
 
 def salvar(df, nome_base="context-rag"):
+    os.makedirs("results", exist_ok=True)
     for i in count(1):
-        nome = f"{nome_base}_{i}.csv"
+        nome = os.path.join("results", f"{nome_base}_{i}.csv")
         if not os.path.exists(nome):
-            df.to_csv(nome, index=False, encoding="utf-8", sep=";")
+            df.to_csv(nome, index=False, encoding="utf-8-sig", sep=";")
             print(f"Salvo em: {nome}")
             break
 
