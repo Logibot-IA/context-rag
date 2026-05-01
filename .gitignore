@@ -1,12 +1,10 @@
-venv
-.venv
-
-venv-ragas
-.venv-ragas
+*venv*
+*sixth*
 
 .env
 .vscode
 .idea
 __pycache__
 chroma_context_db
-results
+results*
+docs_backup
