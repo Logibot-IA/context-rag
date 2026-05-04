@@ -237,7 +237,8 @@ def main():
         base_url=BASE_URL,
         api_key=API_KEY,
         model=MODEL,
-        temperature=0
+        temperature=0,
+        default_headers={"Authorization": f"Bearer {API_KEY}"}
     )
 
     for run in range(15):
