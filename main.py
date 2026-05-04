@@ -1,6 +1,3 @@
-# ! pip install langchain langchain-community langchain-openai langchain-huggingface langchain-text-splitters chromadb pypdf python-dotenv
-# ! pip install ragas datasets sentence-transformers
-
 import os
 from dotenv import load_dotenv
 
@@ -168,9 +165,24 @@ def run_ragas(ragas_data, llm, embeddings):
     return result
 
 def salvar(df, nome_base="context-rag"):
-    os.makedirs("results", exist_ok=True)
+    if not hasattr(salvar, "_results_dir"):
+        base_dir = "results"
+        if not os.path.exists(base_dir):
+            os.makedirs(base_dir, exist_ok=False)
+            salvar._results_dir = base_dir
+        else:
+            for n in count(2):
+                candidate = f"{base_dir}_{n}"
+                if not os.path.exists(candidate):
+                    os.makedirs(candidate, exist_ok=False)
+                    salvar._results_dir = candidate
+                    break
+
+        print(f"Resultados desta execução serão salvos em: {salvar._results_dir}")
+
+    os.makedirs(salvar._results_dir, exist_ok=True)
     for i in count(1):
-        nome = os.path.join("results", f"{nome_base}_{i}.csv")
+        nome = os.path.join(salvar._results_dir, f"{nome_base}_{i}.csv")
         if not os.path.exists(nome):
             df.to_csv(nome, index=False, encoding="utf-8-sig", sep=";")
             print(f"Salvo em: {nome}")
