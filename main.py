@@ -1,6 +1,5 @@
 import os
 from dotenv import load_dotenv
-
 from itertools import count
 
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
@@ -13,17 +12,24 @@ from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
 from datasets import Dataset
 
+from langsmith import traceable
+
+
 load_dotenv()
 
 os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
 os.environ["LANGSMITH_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
-os.environ["LANGCHAIN_API_KEY"]     = os.getenv("LANGCHAIN_API_KEY", "")
-os.environ["LANGCHAIN_PROJECT"]     = os.getenv("LANGCHAIN_PROJECT", "benchmark-context-rag")
+os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
+os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "benchmark-context-rag")
+
 
 BASE_URL = os.getenv("DO_BASE_URL")
 API_KEY = os.getenv("DO_API_KEY")
 MODEL = os.getenv("DO_MODEL")
 HF_TOKEN = os.getenv("HF_TOKEN")
+
+PERSIST_DIR = "./chroma_context_db"
+
 
 test_queries = [
     # FÁCEIS
@@ -43,6 +49,7 @@ test_queries = [
     "Como funciona a repetição ‘repita ... até’ e o que ela garante sobre a execução do bloco?"
 ]
 
+
 ground_truths = [
     # FÁCEIS
     "Lógica de programação é o uso correto das leis do pensamento, da ‘ordem da razão’ e de processos formais de raciocínio e simbolização na programação de computadores, com o objetivo de produzir soluções logicamente válidas e coerentes para resolver problemas.",
@@ -52,7 +59,7 @@ ground_truths = [
 
     # MÉDIAS
     "Um comando de atribuição permite fornecer um valor a uma variável. O tipo do dado atribuído deve ser compatível com o tipo da variável: por exemplo, só se pode atribuir um valor lógico a uma variável declarada como do tipo lógico.",
-    "Operadores aritméticos são o conjunto de símbolos que representam as operações básicas da matemática (por exemplo: + para adição, - para subtração, * para multiplicação e / para divisão). Para potenciação e radiciação, o livro indica o uso das palavras‑chave pot e rad.",
+    "Operadores aritméticos são o conjunto de símbolos que representam as operações básicas da matemática (por exemplo: + para adição, - para subtração, * para multiplicação e / para divisão). Para potenciação e radiciação, o livro indica o uso das palavras-chave pot e rad.",
     "Operadores relacionais são usados para realizar comparações entre dois valores de mesmo tipo primitivo. Esses valores podem ser constantes, variáveis ou expressões aritméticas, e esses operadores são comuns na construção de equações.",
 
     # DIFÍCEIS
@@ -61,7 +68,6 @@ ground_truths = [
     "A estrutura de repetição ‘repita ... até’ permite que um bloco (ou ação primitiva) seja repetido até que uma determinada condição seja verdadeira. Pela sintaxe da estrutura, o bloco é executado pelo menos uma vez, independentemente da validade inicial da condição."
 ]
 
-PERSIST_DIR = "./chroma_context_db"
 
 def build_vectorstore():
     embeddings = HuggingFaceEmbeddings(
@@ -75,82 +81,98 @@ def build_vectorstore():
     )
 
     if vectordb._collection.count() == 0:
-        loader = DirectoryLoader("./docs/", glob="**/*.pdf", loader_cls=PyPDFLoader)
+        loader = DirectoryLoader(
+            "./docs/",
+            glob="**/*.pdf",
+            loader_cls=PyPDFLoader
+        )
+
         docs = loader.load()
 
-        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=800,
+            chunk_overlap=100
+        )
+
         chunks = splitter.split_documents(docs)
 
         print(f"Adicionando {len(chunks)} chunks ao Chroma em batches...")
+
         batch_size = 500
+
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
             vectordb.add_documents(documents=batch)
             print(f"  {min(i + batch_size, len(chunks))}/{len(chunks)} chunks adicionados")
+
         print("Ingestão concluída!")
+
     else:
         print(f"Coleção existente com {vectordb._collection.count()} chunks. Pulando ingestão.")
 
     return vectordb, embeddings
 
-vectordb, embeddings = build_vectorstore()
-retriever = vectordb.as_retriever()
-print(f"Vectorstore pronto: {vectordb._collection.count()} chunks indexados.")
 
-llm = ChatOpenAI(
-    base_url=BASE_URL,
-    api_key=API_KEY,
-    model=MODEL,
-    temperature=0
-)
-
-def context_rag(query, retriever, llm, top_k=5):
+def context_rag(query, retriever, llm):
     docs = retriever.invoke(query)
-    selected_docs = docs[:top_k]
-    contexts = [d.page_content for d in selected_docs]
-    context_text = "".join(contexts)
+
+    contexts = [doc.page_content for doc in docs]
+    context_text = "\n\n".join(contexts)
 
     prompt = f"""
-    Você deve responder usando SOMENTE o contexto fornecido.
+Você deve responder usando SOMENTE o contexto fornecido.
 
-    Contexto:
-    {context_text}
+Contexto:
+{context_text}
 
-    Pergunta:
-    {query}
+Pergunta:
+{query}
 
-    Se a resposta não estiver no contexto, diga:
-    "A informação não está presente no contexto."
-    """
+Se a resposta não estiver no contexto, diga:
+"A informação não está presente no contexto."
+"""
 
     response = llm.invoke(prompt).content
+
     return response, contexts
 
-from langsmith import traceable
 
 @traceable(name="context-rag-query", run_type="chain")
-def context_rag_traced(query, retriever, llm, top_k=5):
-    return context_rag(query, retriever, llm, top_k)
+def context_rag_traced(query, retriever, llm):
+    return context_rag(query, retriever, llm)
 
-print("Coletando respostas para avaliação RAGAS...")
-ragas_data = []
 
-for i, query in enumerate(test_queries):
-    print(f"  [{i+1}/{len(test_queries)}] {query}")
-    answer, contexts = context_rag_traced(query, retriever, llm)
-    ragas_data.append({
-        "question": query,
-        "answer": answer,
-        "contexts": contexts,
-        "ground_truth": ground_truths[i]
-    })
+def executar_context_rag(retriever, llm):
+    ragas_data = []
+
+    print("Coletando respostas do Context RAG...")
+
+    for i, query in enumerate(test_queries):
+        print(f"  [{i + 1}/{len(test_queries)}] {query}")
+
+        answer, contexts = context_rag_traced(query, retriever, llm)
+
+        ragas_data.append({
+            "question": query,
+            "answer": answer,
+            "contexts": contexts,
+            "ground_truth": ground_truths[i]
+        })
+
+    return ragas_data
+
 
 def run_ragas(ragas_data, llm, embeddings):
     dataset = Dataset.from_list(ragas_data)
 
     result = evaluate(
         dataset,
-        metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+        metrics=[
+            faithfulness,
+            answer_relevancy,
+            context_precision,
+            context_recall
+        ],
         llm=llm,
         embeddings=embeddings
     )
@@ -159,20 +181,24 @@ def run_ragas(ragas_data, llm, embeddings):
     print(result)
 
     df = result.to_pandas()
+
     print("Detalhes por query:")
     print(df.to_string())
 
-    return result
+    return df
+
 
 def salvar(df, nome_base="context-rag"):
     if not hasattr(salvar, "_results_dir"):
         base_dir = "results"
+
         if not os.path.exists(base_dir):
             os.makedirs(base_dir, exist_ok=False)
             salvar._results_dir = base_dir
         else:
             for n in count(2):
                 candidate = f"{base_dir}_{n}"
+
                 if not os.path.exists(candidate):
                     os.makedirs(candidate, exist_ok=False)
                     salvar._results_dir = candidate
@@ -181,14 +207,45 @@ def salvar(df, nome_base="context-rag"):
         print(f"Resultados desta execução serão salvos em: {salvar._results_dir}")
 
     os.makedirs(salvar._results_dir, exist_ok=True)
+
     for i in count(1):
-        nome = os.path.join(salvar._results_dir, f"{nome_base}_{i}.csv")
+        nome = os.path.join(
+            salvar._results_dir,
+            f"{nome_base}_{i}.csv"
+        )
+
         if not os.path.exists(nome):
-            df.to_csv(nome, index=False, encoding="utf-8-sig", sep=";")
+            df.to_csv(
+                nome,
+                index=False,
+                encoding="utf-8-sig",
+                sep=";"
+            )
+
             print(f"Salvo em: {nome}")
             break
 
-for i in range(15):
-    print(f"=== RODADA {i+1} ===")
-    result = run_ragas(ragas_data, llm, embeddings)
-    salvar(result.to_pandas(), nome_base=f"context-rag-run-{i+1}")
+
+def main():
+    vectordb, embeddings = build_vectorstore()
+
+    retriever = vectordb.as_retriever(search_kwargs={"k": 5})
+
+    print(f"Vectorstore pronto: {vectordb._collection.count()} chunks indexados.")
+
+    llm = ChatOpenAI(
+        base_url=BASE_URL,
+        api_key=API_KEY,
+        model=MODEL,
+        temperature=0
+    )
+
+    for run in range(15):
+        print(f"\n=== RODADA {run + 1}/15 ===")
+        ragas_data = executar_context_rag(retriever, llm)
+        df_resultado = run_ragas(ragas_data, llm, embeddings)
+        salvar(df_resultado, nome_base=f"context-rag-run-{run + 1}")
+
+
+if __name__ == "__main__":
+    main()
