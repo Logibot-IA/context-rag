@@ -251,7 +251,7 @@ def main():
     temperature=0,
     )
 
-    for run in range(15):
+    for run in range(5):
         print(f"\n=== RODADA {run + 1}/15 ===")
         ragas_data = executar_context_rag(retriever, llm)
         df_resultado = run_ragas(ragas_data, llm, embeddings)
