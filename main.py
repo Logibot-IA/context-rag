@@ -1,3 +1,7 @@
+# para usar o ollama cli + llm local
+from langchain_ollama import ChatOllama
+
+
 import os
 from dotenv import load_dotenv
 from itertools import count
@@ -233,12 +237,18 @@ def main():
 
     print(f"Vectorstore pronto: {vectordb._collection.count()} chunks indexados.")
 
-    llm = ChatOpenAI(
-        base_url=BASE_URL,
-        api_key=API_KEY,
-        model=MODEL,
-        temperature=0,
-        default_headers={"Authorization": f"Bearer {API_KEY}"}
+    # llm = ChatOpenAI(
+    #     base_url=BASE_URL,
+    #     api_key=API_KEY,
+    #     model=MODEL,
+    #     temperature=0,
+    #     default_headers={"Authorization": f"Bearer {API_KEY}"}
+    # )
+    
+    llm = ChatOllama(
+    model="qwen3:14b",
+    base_url="http://localhost:11434",
+    temperature=0,
     )
 
     for run in range(15):
