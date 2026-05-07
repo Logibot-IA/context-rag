@@ -4,8 +4,7 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_openai import ChatOpenAI
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
@@ -18,10 +17,10 @@ os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "false")
 os.environ["LANGCHAIN_API_KEY"]     = os.getenv("LANGCHAIN_API_KEY", "")
 os.environ["LANGCHAIN_PROJECT"]     = os.getenv("LANGCHAIN_PROJECT", "benchmark-context-rag")
 
-BASE_URL = os.getenv("DO_BASE_URL")
-API_KEY = os.getenv("DO_API_KEY")
-MODEL = os.getenv("DO_MODEL")
-HF_TOKEN = os.getenv("HF_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
+OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "medium")
 
 test_queries = [
     "Como o livro Algoritmos: Teoria e Prática, de Cormen, define a notação Θ (Theta) e qual teorema relaciona Θ com as notações O e Ω?",
@@ -50,6 +49,44 @@ ground_truths = [
 ]
 
 
+def get_openai_api_key():
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "OPENAI_API_KEY nao encontrada. Crie um arquivo .env a partir do "
+            ".env.example e informe sua chave da OpenAI."
+        )
+
+    return OPENAI_API_KEY
+
+
+def extract_response_text(response):
+    text = getattr(response, "text", None)
+
+    if callable(text):
+        text = text()
+
+    if text:
+        return text
+
+    content = getattr(response, "content", response)
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") in {"text", "output_text"}:
+                parts.append(block.get("text", ""))
+
+        return "\n".join(part for part in parts if part)
+
+    return str(content)
+
+
 def build_vectorstore():
     loader = DirectoryLoader("../docs/", glob="**/*.pdf", loader_cls=PyPDFLoader)
     docs = loader.load()
@@ -60,12 +97,23 @@ def build_vectorstore():
     )
     chunks = splitter.split_documents(docs)
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
+    embeddings = OpenAIEmbeddings(
+        model=OPENAI_EMBEDDING_MODEL,
+        api_key=get_openai_api_key(),
     )
 
     vectordb = Chroma.from_documents(chunks, embedding=embeddings)
     return vectordb, embeddings
+
+
+def build_llm():
+    return ChatOpenAI(
+        api_key=get_openai_api_key(),
+        model=OPENAI_MODEL,
+        reasoning_effort=OPENAI_REASONING_EFFORT,
+        temperature=None,
+        use_responses_api=True,
+    )
 
 
 def context_rag(query, retriever, llm, top_k=5):
@@ -87,8 +135,8 @@ def context_rag(query, retriever, llm, top_k=5):
     "A informação não está presente no contexto."
     """
 
-    response = llm.invoke(prompt).content
-    return response, contexts
+    response = llm.invoke(prompt)
+    return extract_response_text(response), contexts
 
 
 @traceable(name="context-rag-query", run_type="chain")
@@ -121,18 +169,14 @@ def main():
     vectordb, embeddings = build_vectorstore()
     retriever = vectordb.as_retriever()
 
-    llm = ChatOpenAI(
-        base_url=BASE_URL,
-        api_key=API_KEY,
-        model=MODEL,
-        temperature=0
-    )
-
     print("Coletando respostas para avaliacao RAGAS...\n")
     ragas_data = []
+    answer_llm = build_llm()
+    eval_llm = build_llm()
+
     for i, query in enumerate(test_queries):
         print(f"  [{i+1}/{len(test_queries)}] {query}")
-        answer, contexts = context_rag_traced(query, retriever, llm)
+        answer, contexts = context_rag_traced(query, retriever, answer_llm)
         ragas_data.append({
             "question": query,
             "answer": answer,
@@ -140,7 +184,7 @@ def main():
             "ground_truth": ground_truths[i]
         })
 
-    run_ragas(ragas_data, llm, embeddings)
+    run_ragas(ragas_data, eval_llm, embeddings)
 
 
 if __name__ == "__main__":

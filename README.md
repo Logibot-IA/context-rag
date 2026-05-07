@@ -1,19 +1,19 @@
-# Conext RAG
+# Context RAG
 
 Sistema de perguntas e respostas sobre documentos PDF utilizando Retrieval-Augmented Generation (RAG) com avaliação de qualidade através do framework RAGAS.
 
 ## Funcionalidades
 
 - Carregamento e indexação de documentos PDF
-- Busca semântica via embeddings do HuggingFace
-- Geração de respostas contextualizadas usando LLM
+- Busca semântica via OpenAI Embeddings (`text-embedding-3-large`)
+- Geração de respostas contextualizadas via OpenAI (`gpt-5.5` por padrão)
 - Avaliação automática de qualidade com métricas RAGAS (faithfulness, answer relevancy, context precision)
 
 ## Requisitos
 
-- Python 3.8+
-- Conta com acesso a API de LLM compatível com OpenAI
-- Token do HuggingFace
+- Python 3.10+
+- Conta na OpenAI com acesso à API
+- Chave de API da OpenAI
 
 ## Ambiente Virtual
 
@@ -48,14 +48,18 @@ pip install -r requirements.txt
 
 ## Configuração
 
-Crie um arquivo `.env` na raiz do projeto com as seguintes variáveis:
+Crie um arquivo `.env` na raiz do projeto a partir do `.env.example` e informe sua chave:
 
 ```
-DO_BASE_URL=sua_url_base_api
-DO_API_KEY=sua_chave_api
-DO_MODEL=nome_do_modelo
-HF_TOKEN=seu_token_huggingface
+OPENAI_API_KEY=sk-sua_chave_openai
+OPENAI_MODEL=gpt-5.5
+OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+OPENAI_REASONING_EFFORT=medium
+CHROMA_PERSIST_DIR=./chroma_context_db_openai
+CHROMA_COLLECTION_NAME=context_collection_openai
 ```
+
+Ao trocar o modelo de embeddings, use um diretório novo para o ChromaDB ou remova a base vetorial antiga, porque dimensões de embeddings diferentes não podem compartilhar a mesma coleção.
 
 ## Uso
 
@@ -64,15 +68,15 @@ python main.py
 ```
 
 O sistema irá:
-1. Indexar o PDF especificado
-2. Solicitar uma pergunta
-3. Retornar a resposta baseada no contexto do documento
-4. Exibir métricas de avaliação da resposta
+1. Indexar os PDFs da pasta `docs/`
+2. Executar as perguntas de benchmark configuradas em `main.py`
+3. Gerar respostas usando somente os trechos recuperados
+4. Exibir e salvar métricas de avaliação RAGAS
 
 ## Tecnologias
 
 - LangChain: orchestração do pipeline RAG
 - ChromaDB: armazenamento vetorial
-- HuggingFace: embeddings (sentence-transformers/all-MiniLM-L6-v2)
+- OpenAI: embeddings (`text-embedding-3-large`) e modelo de respostas (`gpt-5.5`)
 - RAGAS: avaliação de qualidade do RAG
 - PyPDF: processamento de PDFs
