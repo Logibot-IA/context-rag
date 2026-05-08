@@ -473,8 +473,8 @@ def main():
 
     print(f"Vectorstore pronto: {vectordb._collection.count()} chunks indexados.")
 
-    for run in range(1):
-        print(f"\n=== RODADA {run + 1}/1 ===")
+    for run in range(5):
+        print(f"\n=== RODADA {run + 1}/5 ===")
         answer_llm = build_llm()
         eval_llm = build_ragas_llm()
 
